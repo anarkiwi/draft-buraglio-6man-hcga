@@ -109,7 +109,7 @@ Hierarchical CGA (HCGA), an extension to RFC 3972 that also derives part of
 the upper 64 bits — specifically the bits between the organizational prefix
 and the /64 boundary — from the same public key. The result is an address
 whose full 128-bit value is a deterministic function of a hardware-bound key,
-an operator-controlled aggregate prefix, and an RFC 3972 modifier. This capability 
+an operator-controlled aggregate prefix, and an RFC 3972 modifier. This capability
 provides agentic and workload network accountability in multi-tenant
 environments such as Kubernetes clusters, where infrastructure-assigned
 prefixes provide no per-instance cryptographic binding.
