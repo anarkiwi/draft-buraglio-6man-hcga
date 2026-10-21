@@ -4,3 +4,16 @@
 .cursor/
 .copilot/
 CLAUDE.md
+
+# i-d-template build library (cloned on demand by Makefile)
+lib/
+
+# Build artifacts
+.refcache
+.venv
+.gems
+node_modules
+.targets.mk
+draft-*.html
+draft-*.txt
+draft-*.xml
