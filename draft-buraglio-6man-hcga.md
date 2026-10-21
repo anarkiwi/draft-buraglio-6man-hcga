@@ -489,12 +489,6 @@ structure.
 
 --- back
 
-# Acknowledgements
-{:numbered="false"}
-
-The authors would like to thank Fern Siedel and Kapil Agrawal for valuable input.
-
-
 # Appendix A: Example HCGA Derivation (ECDSA P-256, /48 Aggregate)
 
 Given:
@@ -573,5 +567,10 @@ func DeriveHCGAPrefix(aggregate netip.Prefix, pub *ecdsa.PublicKey) (netip.Prefi
     return netip.PrefixFrom(addr.Unmap(), 64), nil
 }
 ```
+
+# Acknowledgements
+{:numbered="false"}
+
+The authors would like to thank Fern Siedel and Kapil Agrawal for valuable input.
 
 ---
