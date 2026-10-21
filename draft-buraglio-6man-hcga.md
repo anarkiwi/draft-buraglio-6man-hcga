@@ -83,20 +83,23 @@ informative:
     target: https://github.com/buraglio/anchor
   SPIRE:
     title: SPIRE
-    organization: SPIFFE Project
+    author:
+      - org: SPIFFE Project
     target: https://github.com/spiffe/spire
   KATA:
     title: Kata Containers
-    organization: Kata Containers Project
+    author:
+      - org: Kata Containers Project
     target: https://katacontainers.io
   KEYLIME:
     title: Keylime
-    organization: Keylime Project
+    author:
+      - org: Keylime Project
     target: https://keylime.dev
 
 ---
 
-## Abstract
+--- abstract
 
 RFC 3972 defines Cryptographically Generated Addresses (CGA), in which the
 Interface Identifier (IID) of an IPv6 address is derived from a cryptographic
@@ -113,12 +116,14 @@ prefixes provide no per-instance cryptographic binding.
 
 ---
 
+--- middle
+
 ## 1. Introduction
 
-RFC 3972 [RFC3972] provides a mechanism to bind an IPv6 host's network
+RFC 3972 {{RFC3972}} provides a mechanism to bind an IPv6 host's network
 address to a public key by deriving the 64-bit Interface Identifier (IID)
 from a cryptographic hash of the key. This binding enables Secure Neighbor
-Discovery [RFC3971] and is used by ANCHOR [ANCHOR-PoC] as the primary
+Discovery {{RFC3971}} and is used by ANCHOR {{ANCHOR-PoC}} as the primary
 forensic accountability signal.
 
 RFC 3972 treats the /64 prefix as a trusted external input from network
@@ -152,15 +157,13 @@ Together, the full 128-bit address is a deterministic, verifiable function of
 the hardware key, the operator-controlled aggregate prefix, and the RFC 3972
 modifier. HCGA operates at the network layer and is designed as a complement
 to application-layer workload identity mechanisms such as those developed in
-the IETF WIMSE working group [WIMSE-ARCH].
-
----
+the IETF WIMSE working group {{WIMSE-ARCH}}.
 
 ## 2. Conventions and Terminology
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
 "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this
-document are to be interpreted as described in BCP 14 [RFC2119] [RFC8174]
+document are to be interpreted as described in BCP 14 {{RFC2119}} {{RFC8174}}
 when, and only when, they appear in all capitals, as shown here.
 
 **Aggregate Prefix (A):** An IPv6 prefix of length L (L < 64), operator-
@@ -181,8 +184,6 @@ subnet prefix, public key (SPKI format).
 defined in RFC 5480 for ECDSA keys. This is the same format used by RFC 3972
 and RFC 4982.
 
----
-
 ## 3. RFC 3972 Background
 
 RFC 3972 §5 defines the CGA IID generation procedure:
@@ -199,11 +200,9 @@ Verification works in reverse: given `(address, modifier, public_key)`,
 recompute the IID and compare it against `address[8:16]`. The prefix input
 is taken from the address itself (bits 0–63).
 
-RFC 4982 [RFC4982] extends CGA to support multiple hash algorithms via a
+RFC 4982 {{RFC4982}} extends CGA to support multiple hash algorithms via a
 hash algorithm extension. HCGA uses SHA-256 with ECDSA P-256, consistent
 with the RFC 4982 framework.
-
----
 
 ## 4. Problem Statement
 
@@ -236,8 +235,6 @@ different modifiers. In RFC 3972, all such addresses share the same /64.
 In HCGA, the agent owns the /64 entirely — it may derive addresses with
 any IID within its /64, enabling per-connection address pseudonymity while
 retaining per-agent /64 accountability.
-
----
 
 ## 5. HCGA Specification
 
@@ -318,7 +315,7 @@ hcga_address = hcga_prefix :: IID
 
 The resulting 128-bit address has:
 - Bits 0 to L−1: operator-controlled aggregate prefix (fixed, BGP-announced)
-- Bits L to 63: SHA-256(public_key)[0:64-L] — hardware-derived subnet bits
+- Bits L to 63: `SHA-256(public_key)[0:64-L]` — hardware-derived subnet bits
 - Bits 64 to 127: RFC 3972 IID — hardware-derived, modifier-randomized
 
 ### 5.6 Verification Procedure
@@ -355,8 +352,6 @@ addresses with the same /64 prefix. The modifier does not affect the subnet
 bits; prefix collision requires either a different aggregate or a different
 key.
 
----
-
 ## 6. Multiple HCGA Addresses per Agent
 
 The HCGA prefix depends only on the public key, while the IID depends on
@@ -372,8 +367,6 @@ addresses within the same /64 by varying the modifier. This enables:
 Multiple addresses per agent do not affect forensic accountability: any
 address in the agent's /64 is attributable to the same hardware key via
 the prefix verification step.
-
----
 
 ## 7. Interaction with RFC 3972 CGA Parameters
 
@@ -392,14 +385,12 @@ correctly validate the IID with `hcga_prefix` as the subnet prefix. It
 cannot verify that `hcga_prefix` is itself derived from the public key —
 that check requires a verifier that implements this specification.
 
----
-
 ## 8. Routing Considerations
 
 ### 8.1 Aggregate Announcement
 
 The autonomous system operating the ANCHOR deployment MUST announce the
-aggregate prefix A via BGP [RFC4271], covered by an RPKI ROA [RFC9582].
+aggregate prefix A via BGP {{RFC4271}}, covered by an RPKI ROA {{RFC9582}}.
 Per-/64 routes are not announced externally; they remain internal to the
 cluster or network segment. External observers see only the aggregate,
 as with any provider-independent prefix assignment.
@@ -418,8 +409,6 @@ is needed — RPKI operates at the granularity of BGP announcements, and
 per-/64 routes are never advertised externally. The full accountability
 chain `ROA(aggregate) → ASN → aggregate → HCGA /64 → IID` is verifiable
 without any additional RPKI infrastructure.
-
----
 
 ## 9. Security Considerations
 
@@ -446,7 +435,7 @@ personal data.
 
 Multiple HCGA addresses per agent (§6) provide IID-level pseudonymity but
 not /64-level pseudonymity — the /64 is permanently bound to the hardware
-key. This linkability is stronger than that of temporary addresses [RFC8981],
+key. This linkability is stronger than that of temporary addresses {{RFC8981}},
 which rotate both the IID and (in some deployments) the prefix. Operators
 should weigh RFC 8981 semantics carefully before deploying HCGA where
 individual privacy is a concern.
@@ -472,13 +461,11 @@ for the underlying key pair:
 Relying parties MUST inspect the `tier` field in the ANCHOR registry entry
 to determine the attestation strength of a given HCGA address. HCGA
 verification itself does not distinguish between tiers; attestation-strength
-labeling is the registry's responsibility. The RATS architecture [RFC9334]
+labeling is the registry's responsibility. The RATS architecture {{RFC9334}}
 provides the framework for remote attestation evidence conveyance;
-[RATS-KEY-ATTEST] addresses hardware key attestation for HSMs and TPMs.
-For SPIFFE-chained deployments, [TRANSITIVE-ATTEST] addresses transitive
+{{RATS-KEY-ATTEST}} addresses hardware key attestation for HSMs and TPMs.
+For SPIFFE-chained deployments, {{TRANSITIVE-ATTEST}} addresses transitive
 attestation across workload boundaries.
-
----
 
 ## 10. IANA Considerations
 
@@ -500,44 +487,15 @@ structure.
 
 ---
 
-## 11. References
+--- back
 
-### 11.1 Normative References
-
-- [RFC2119] Bradner, S., "Key words for use in RFCs to Indicate Requirement Levels", BCP 14, RFC 2119, March 1997.
-- [RFC8174] Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words", BCP 14, RFC 8174, May 2017.
-- [RFC4291] Hinden, R. and S. Deering, "IP Version 6 Addressing Architecture", RFC 4291, February 2006.
-- [RFC3972] Aura, T., "Cryptographically Generated Addresses (CGA)", RFC 3972, March 2005.
-- [RFC4982] Bagnulo, M. and J. Arkko, "Support for Multiple Hash Algorithms in Cryptographically Generated Addresses (CGAs)", RFC 4982, July 2007.
-- [RFC5480] Turner, S. et al., "Elliptic Curve Cryptography Subject Public Key Information", RFC 5480, March 2009.
-- [RFC6234] Eastlake 3rd, D. and T. Hansen, "US Secure Hash Algorithms (SHA and SHA-based HMAC and HKDF)", RFC 6234, May 2011.
-
-### 11.2 Informative References
-
-- [RFC3971] Arkko, J. et al., "SEcure Neighbor Discovery (SEND)", RFC 3971, March 2005.
-- [RFC4271] Rekhter, Y. et al., "A Border Gateway Protocol 4 (BGP-4)", RFC 4271, January 2006.
-- [RFC7217] Gont, F., "A Method for Generating Semantically Opaque Interface Identifiers with IPv6 Stateless Address Autoconfiguration (SLAAC)", RFC 7217, April 2014.
-- [RFC8200] Deering, S. and R. Hinden, "Internet Protocol, Version 6 (IPv6) Specification", RFC 8200, July 2017.
-- [RFC8981] Gont, F. et al., "Temporary Address Extensions for Stateless Address Autoconfiguration in IPv6", RFC 8981, February 2021.
-- [RFC9334] Birkholz, H. et al., "Remote ATtestation procedureS (RATS) Architecture", RFC 9334, January 2023.
-- [RFC9582] Azimov, A. et al., "A Profile for Route Origin Authorizations (ROAs)", RFC 9582, May 2024.
-- [ANCHOR-PoC] Buraglio, N., "ANCHOR: Agent Network Cryptographic Hardware Origin Recording", Work in Progress, 2026. https://github.com/buraglio/anchor
-- [SPIRE] SPIFFE Project, "SPIRE", https://github.com/spiffe/spire
-- [KATA] Kata Containers Project, "Kata Containers", https://katacontainers.io
-- [KEYLIME] Keylime Project, "Keylime", https://keylime.dev
-- [WIMSE-ARCH] Salowey, J., Rosomakho, Y., and H. Tschofenig, "Workload Identity in a Multi System Environment (WIMSE) Architecture", draft-ietf-wimse-arch-08, Work in Progress, 2026.
-- [TRANSITIVE-ATTEST] Mandyam, G. and J. Walker, "Transitive Attestation for Sovereign Workloads", draft-mw-wimse-transitive-attestation-00, Work in Progress, 2026.
-- [RATS-KEY-ATTEST] Fiset, J-P. et al., "Evidence Encoding for Hardware Security Modules", draft-ietf-rats-pkix-key-attestation-07, Work in Progress, 2026.
-
----
-
-## Acknowledgements
+# Acknowledgements
+{:numbered="false"}
 
 The authors would like to thank Fern Siedel and Kapil Agrawal for valuable input.
 
----
 
-## Appendix A: Example HCGA Derivation (ECDSA P-256, /48 Aggregate)
+# Appendix A: Example HCGA Derivation (ECDSA P-256, /48 Aggregate)
 
 Given:
 - aggregate: `2001:db8:cafe::/48`
@@ -573,9 +531,8 @@ Verification:
 2. Subnet check: `SHA-256(pubkey)[0:2] = 0x3a7f` → matches bits 48–63 ✓
 3. IID check: recompute → `c85e:8b4d:e3ce:e949` ✓
 
----
 
-## Appendix B: Go Implementation Sketch
+# Appendix B: Go Implementation Sketch
 
 ```go
 // DeriveHCGAPrefix derives the /64 HCGA prefix from an aggregate and public key.
@@ -616,3 +573,5 @@ func DeriveHCGAPrefix(aggregate netip.Prefix, pub *ecdsa.PublicKey) (netip.Prefi
     return netip.PrefixFrom(addr.Unmap(), 64), nil
 }
 ```
+
+---
