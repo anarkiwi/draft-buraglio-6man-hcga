@@ -75,6 +75,18 @@ informative:
     seriesinfo:
       Internet-Draft: draft-ietf-rats-pkix-key-attestation-07
     date: 2026
+  WIMSE-AIMS:
+    title: AI Identity Management System
+    author:
+      - ins: P. Kasselman
+      - ins: J. Lombardo
+      - ins: Y. Rosomakho
+      - ins: B. Campbell
+      - ins: N. Steele
+      - ins: A. Parecki
+    seriesinfo:
+      Internet-Draft: draft-ietf-wimse-aims-00
+    date: 2026
   ANCHOR-PoC:
     title: "ANCHOR: Agent Network Cryptographic Hardware Origin Recording"
     author:
@@ -156,8 +168,10 @@ hierarchy:
 Together, the full 128-bit address is a deterministic, verifiable function of
 the hardware key, the operator-controlled aggregate prefix, and the RFC 3972
 modifier. HCGA operates at the network layer and is designed as a complement
-to application-layer workload identity mechanisms such as those developed in
-the IETF WIMSE working group {{WIMSE-ARCH}}.
+to application-layer workload identity mechanisms such as the WIMSE
+architecture {{WIMSE-ARCH}} and the AI Identity Management System
+{{WIMSE-AIMS}}, which address authentication and authorization of AI agent
+interactions above the IP layer.
 
 ## 2. Conventions and Terminology
 
@@ -181,12 +195,12 @@ to the aggregate prefix.
 subnet prefix, public key (SPKI format).
 
 **SPKI:** SubjectPublicKeyInfo, the DER-encoded format for a public key as
-defined in RFC 5480 for ECDSA keys. This is the same format used by RFC 3972
-and RFC 4982.
+defined in [RFC5480] for ECDSA keys. This is the same format used by [RFC3972]
+and [RFC4982].
 
 ## 3. RFC 3972 Background
 
-RFC 3972 §5 defines the CGA IID generation procedure:
+[RFC3972] §5 defines the CGA IID generation procedure:
 
 ```
 IID = SHA-256(modifier[16] || 0x00^9 || prefix[8] || public_key_SPKI)[:8]
@@ -200,7 +214,7 @@ Verification works in reverse: given `(address, modifier, public_key)`,
 recompute the IID and compare it against `address[8:16]`. The prefix input
 is taken from the address itself (bits 0–63).
 
-RFC 4982 {{RFC4982}} extends CGA to support multiple hash algorithms via a
+[RFC4982] extends CGA to support multiple hash algorithms via a
 hash algorithm extension. HCGA uses SHA-256 with ECDSA P-256, consistent
 with the RFC 4982 framework.
 
@@ -221,9 +235,9 @@ workload key.
 
 ### 4.2 Per-Agent /64 Routing
 
-A network operator managing a large agentic deployments may want per-agent
-routing policy: rate limiting, traffic engineering, QoS, monitoring. If each
-agent has its own /64, those policies map directly to routing table entries.
+A network operator managing a large agentic deployment may prefer or be required by policy to provide per-agent
+routing policy on order to provide technical features such as rate limiting, traffic engineering, QoS, and monitoring. If each
+agent is provisioned with its own /64, those policies are able to map directly to routing table entries.
 Infrastructure-assigned prefixes require an external table to connect an
 address to an agent; hardware-derived prefixes carry that mapping in the
 address itself.
@@ -231,7 +245,7 @@ address itself.
 ### 4.3 Multiple Addresses per Agent
 
 CGA allows a host to derive multiple addresses from the same key with
-different modifiers. In RFC 3972, all such addresses share the same /64.
+different modifiers. In [RFC3972], all such addresses share the same /64.
 In HCGA, the agent owns the /64 entirely — it may derive addresses with
 any IID within its /64, enabling per-connection address pseudonymity while
 retaining per-agent /64 accountability.
@@ -273,7 +287,7 @@ hcga_prefix_bits = aggregate_bits[0:L] || subnet_bits[0:n]
 hcga_prefix      = IPv6 prefix of length 64 formed from hcga_prefix_bits
 ```
 
-Equivalently, in Go notation:
+Equivalently, in GoLang notation:
 ```go
 var prefixBytes [8]byte
 copy(prefixBytes[:], aggregate.Addr().As16()[:L/8])
@@ -293,7 +307,7 @@ if L%8 != 0 {
 
 ### 5.4 IID Derivation
 
-The IID is computed per RFC 3972 §5 using `hcga_prefix` as the prefix input:
+The IID is computed per [RFC3972] §5 using `hcga_prefix` as the prefix input:
 
 ```
 IID = SHA-256(modifier[16] || 0x00^9 || hcga_prefix_bytes[8] || public_key_SPKI_DER)[:8]
@@ -304,7 +318,7 @@ where `hcga_prefix_bytes[8]` is the 8-byte representation of the /64
 network address (i.e., the first 8 bytes of a 128-bit address formed by
 appending 64 zero bits to `hcga_prefix`).
 
-This is identical to RFC 3972 §5 with `hcga_prefix` substituted for the
+This is identical to [RFC3972] §5 with `hcga_prefix` substituted for the
 externally-provided prefix.
 
 ### 5.5 HCGA Address Construction
@@ -338,9 +352,9 @@ address. Failure of any check MUST be treated as a verification failure.
 
 ### 5.7 Modifier Handling
 
-The modifier serves the same purpose as in RFC 3972: collision avoidance
+The modifier serves the same purpose as in [RFC3972]: collision avoidance
 when the SHA-256 IID derivation produces an address that is already in use.
-An implementation MUST implement the RFC 3972 §5 collision detection
+An implementation MUST implement the [RFC3972] §5 collision detection
 procedure, incrementing the modifier until no collision is detected.
 
 For HCGA, collision detection applies to both the IID (within the /64) and
@@ -350,7 +364,7 @@ n²/(2 × 2^16) — approximately 0.7% for 1,000 agents (birthday bound). An
 operator MUST monitor for prefix collisions and MUST NOT issue two HCGA
 addresses with the same /64 prefix. The modifier does not affect the subnet
 bits; prefix collision requires either a different aggregate or a different
-key.
+key. In operation this is typically the result of human error or misconfiguration.
 
 ## 6. Multiple HCGA Addresses per Agent
 
@@ -370,7 +384,7 @@ the prefix verification step.
 
 ## 7. Interaction with RFC 3972 CGA Parameters
 
-HCGA reuses the RFC 3972 CGA parameter structure (modifier, subnet prefix,
+HCGA reuses the [RFC3972] CGA parameter structure (modifier, subnet prefix,
 collision count, public key) directly, with one substitution:
 
 - **modifier**: unchanged, per RFC 3972
@@ -458,14 +472,14 @@ for the underlying key pair:
   chain via SPIRE tpm_devid node attestation
 - **Software key (stub mode):** no hardware binding; development use only
 
-Relying parties MUST inspect the `tier` field in the ANCHOR registry entry
-to determine the attestation strength of a given HCGA address. HCGA
-verification itself does not distinguish between tiers; attestation-strength
-labeling is the registry's responsibility. The RATS architecture {{RFC9334}}
-provides the framework for remote attestation evidence conveyance;
-{{RATS-KEY-ATTEST}} addresses hardware key attestation for HSMs and TPMs.
-For SPIFFE-chained deployments, {{TRANSITIVE-ATTEST}} addresses transitive
-attestation across workload boundaries.
+HCGA verification does not encode attestation tier; the mechanism binds
+an address to a public key regardless of how that key is protected. Relying
+parties SHOULD obtain and verify attestation evidence alongside the HCGA
+address to determine the strength of the underlying key binding. The RATS
+architecture {{RFC9334}} provides the framework for remote attestation
+evidence conveyance; {{RATS-KEY-ATTEST}} addresses hardware key attestation
+for HSMs and TPMs. For SPIFFE-chained deployments, {{TRANSITIVE-ATTEST}}
+addresses transitive attestation across workload boundaries.
 
 ## 10. IANA Considerations
 
