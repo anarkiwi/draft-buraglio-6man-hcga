@@ -1,0 +1,6 @@
+# AI tooling — never track these
+.claude/
+.aider/
+.cursor/
+.copilot/
+CLAUDE.md
