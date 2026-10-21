@@ -109,8 +109,8 @@ Hierarchical CGA (HCGA), an extension to RFC 3972 that also derives part of
 the upper 64 bits — specifically the bits between the organizational prefix
 and the /64 boundary — from the same public key. The result is an address
 whose full 128-bit value is a deterministic function of a hardware-bound key,
-an operator-controlled aggregate prefix, and an RFC 3972 modifier. The
-motivation is AI agent and workload network accountability in multi-tenant
+an operator-controlled aggregate prefix, and an RFC 3972 modifier. This capability 
+provides agentic and workload network accountability in multi-tenant
 environments such as Kubernetes clusters, where infrastructure-assigned
 prefixes provide no per-instance cryptographic binding.
 
@@ -133,9 +133,9 @@ virtualized workloads, however, the prefix is assigned by an orchestration
 layer (CNI plugin, cloud provider, or hypervisor) and has no cryptographic
 relationship to the workload's identity.
 
-This gap matters for AI agent accountability in two concrete ways:
+This gap matters for agentic accountability in two concrete ways:
 
-1. **Multiple agents per prefix.** Thousands of AI agent instances may share
+1. **Multiple agents per prefix.** Thousands of agentic instances may share
    a single /64 (e.g., all pods on a node subnet). The IID distinguishes
    instances within the prefix, but the prefix itself is a coarse-grained
    infrastructure artifact with no binding to any particular workload key.
@@ -221,7 +221,7 @@ workload key.
 
 ### 4.2 Per-Agent /64 Routing
 
-A network operator managing a large AI agent deployment may want per-agent
+A network operator managing a large agentic deployments may want per-agent
 routing policy: rate limiting, traffic engineering, QoS, monitoring. If each
 agent has its own /64, those policies map directly to routing table entries.
 Infrastructure-assigned prefixes require an external table to connect an
@@ -428,7 +428,7 @@ already reveals. No additional key material is exposed.
 Compared to RFC 3972 CGA, HCGA addresses are more linkable in one respect:
 the /64 subnet is stable across IID rotations (modifier changes). Any two
 HCGA addresses that share the same /64 are attributable to the same hardware
-key, even without inspecting the IID. This is intentional for AI agent
+key, even without inspecting the IID. This is intentional for agentic
 accountability, but it may be inappropriate for privacy-sensitive deployments.
 Operators MUST assess this tradeoff before using HCGA for traffic involving
 personal data.
