@@ -223,11 +223,11 @@ with the RFC 4982 framework.
 ### 4.1 Infrastructure-Assigned Prefixes Carry No Key Binding
 
 In RFC 3972 deployments, the /64 prefix is external. Consider a Kubernetes
-node with prefix `2001:db8:cafe:1::/64` assigned by the CNI plugin. All pods
+node with prefix `3fff:1:cafe:1::/64` assigned by the CNI plugin. All pods
 on that node share the same /64. Each pod generates a CGA IID from its own
 key and the shared prefix, producing unique addresses within the /64.
 
-The mechanism works: each pod gets a unique, verifiable address within the
+In this scenario, each pod gets a unique, verifiable address within the
 /64. The limitation is that the prefix itself is a network infrastructure
 artifact — it identifies the node or node subnet, not the individual agent.
 The prefix alone carries no cryptographic relationship to any particular
@@ -516,7 +516,7 @@ structure.
 # Appendix A: Example HCGA Derivation (ECDSA P-256, /48 Aggregate)
 
 Given:
-- aggregate: `2001:db8:cafe::/48`
+- aggregate: `3fff:1:cafe::/48`
 - ECDSA P-256 key pair (generated fresh; public key in SPKI DER form, 91 bytes)
 - modifier: `0000000000000000` (16 zero bytes; use random in production)
 
@@ -541,11 +541,11 @@ IID = e.g., c8:5e:8b:4d:e3:ce:e9:49
 
 Step 4 — HCGA address:
 ```
-2001:db8:cafe:3a7f:c85e:8b4d:e3ce:e949
+3fff:1:cafe:3a7f:c85e:8b4d:e3ce:e949
 ```
 
 Verification:
-1. Aggregate check: `2001:db8:cafe:` → matches operator's /48 ✓
+1. Aggregate check: `3fff:1:cafe:` → matches operator's /48 ✓
 2. Subnet check: `SHA-256(pubkey)[0:2] = 0x3a7f` → matches bits 48–63 ✓
 3. IID check: recompute → `c85e:8b4d:e3ce:e949` ✓
 
