@@ -290,18 +290,23 @@ hcga_prefix      = IPv6 prefix of length 64 formed from hcga_prefix_bits
 Equivalently, in GoLang notation:
 ```go
 var prefixBytes [8]byte
-copy(prefixBytes[:], aggregate.Addr().As16()[:L/8])
+aggBytes := aggregate.Addr().As16()
+copy(prefixBytes[:], aggBytes[:L/8])
 subnetHash := sha256.Sum256(publicKeySPKIDER)
-// copy the subnet bits into the remaining bytes
-for i := L / 8; i < 8; i++ {
-    prefixBytes[i] = subnetHash[i - L/8]
-}
-// if L is not byte-aligned, mask the partial byte
-if L%8 != 0 {
-    mask := byte(0xFF) << (8 - L%8)
-    aggByte := aggregate.Addr().As16()[L/8] & mask
-    subByte  := subnetHash[0] & ^mask
-    prefixBytes[L/8] = aggByte | subByte
+if L%8 == 0 {
+    // Byte-aligned: copy hash bytes directly
+    for i := L / 8; i < 8; i++ {
+        prefixBytes[i] = subnetHash[i-L/8]
+    }
+} else {
+    // Non-byte-aligned: shift hash bits to align with address bit boundary
+    shift := uint(L % 8)
+    mask := byte(0xFF) << (8 - shift)
+    prefixBytes[L/8] = (aggBytes[L/8] & mask) | (subnetHash[0] >> shift)
+    for i := L/8 + 1; i < 8; i++ {
+        j := i - L/8 - 1
+        prefixBytes[i] = (subnetHash[j] << (8 - shift)) | (subnetHash[j+1] >> shift)
+    }
 }
 ```
 
@@ -310,15 +315,17 @@ if L%8 != 0 {
 The IID is computed per [RFC3972] §5 using `hcga_prefix` as the prefix input:
 
 ```
-IID = SHA-256(modifier[16] || 0x00^9 || hcga_prefix_bytes[8] || public_key_SPKI_DER)[:8]
+IID = SHA-256(modifier[16] || 0x00^9 || hcga_prefix_bytes[8] || 0x00 || public_key_SPKI_DER)[:8]
 IID[0] &= 0xFC
 ```
 
 where `hcga_prefix_bytes[8]` is the 8-byte representation of the /64
 network address (i.e., the first 8 bytes of a 128-bit address formed by
-appending 64 zero bits to `hcga_prefix`).
+appending 64 zero bits to `hcga_prefix`), and the single `0x00` octet is
+the RFC 3972 collision count field (fixed at zero for HCGA; collision
+avoidance uses modifier variation rather than the CGA retry mechanism).
 
-This is identical to [RFC3972] §5 with `hcga_prefix` substituted for the
+This is identical to {{RFC3972}} §5 with `hcga_prefix` substituted for the
 externally-provided prefix.
 
 ### 5.5 HCGA Address Construction
@@ -359,9 +366,12 @@ procedure, incrementing the modifier until no collision is detected.
 
 For HCGA, collision detection applies to both the IID (within the /64) and
 the /64 prefix itself (across agents within the aggregate). The probability
-of a /64 prefix collision for n agents in a /48 aggregate is approximately
-n²/(2 × 2^16) — approximately 0.7% for 1,000 agents (birthday bound). An
-operator MUST monitor for prefix collisions and MUST NOT issue two HCGA
+of at least one /64 prefix collision among n agents in a /48 aggregate is
+approximately n²/(2 × 2^16) — approximately 0.7% for 30 agents; the birthday
+bound (50% collision probability) is reached at approximately 300 agents in a
+/48 aggregate.
+
+An operator MUST monitor for prefix collisions and MUST NOT issue two HCGA
 addresses with the same /64 prefix. The modifier does not affect the subnet
 bits; prefix collision requires either a different aggregate or a different
 key. In operation this is typically the result of human error or misconfiguration.
@@ -524,7 +534,7 @@ hcga_prefix = 2001:0db8:cafe:3a7f::/64
 Step 3 — IID:
 ```
 hcga_prefix_bytes = 20 01 0d b8 ca fe 3a 7f
-IID_full = SHA-256(modifier[16] || 0x00^9 || hcga_prefix_bytes[8] || pubkey_SPKI_DER)[:8]
+IID_full = SHA-256(modifier[16] || 0x00^9 || hcga_prefix_bytes[8] || 0x00 || pubkey_SPKI_DER)[:8]
 IID_full[0] &= 0xFC
 IID = e.g., c8:5e:8b:4d:e3:ce:e9:49
 ```
@@ -560,14 +570,19 @@ func DeriveHCGAPrefix(aggregate netip.Prefix, pub *ecdsa.PublicKey) (netip.Prefi
     var prefixBytes [16]byte
     copy(prefixBytes[:], aggBytes[:L/8])
 
-    // Fill subnet bits from hash
-    for i := L / 8; i < 8; i++ {
-        prefixBytes[i] = subnetHash[i-L/8]
-    }
-    // Handle non-byte-aligned aggregate boundary
-    if L%8 != 0 {
-        mask := byte(0xFF) << (8 - L%8)
-        prefixBytes[L/8] = (aggBytes[L/8] & mask) | (subnetHash[0] & ^mask)
+    // Fill subnet bytes from hash
+    if L%8 == 0 {
+        for i := L / 8; i < 8; i++ {
+            prefixBytes[i] = subnetHash[i-L/8]
+        }
+    } else {
+        shift := uint(L % 8)
+        mask := byte(0xFF) << (8 - shift)
+        prefixBytes[L/8] = (aggBytes[L/8] & mask) | (subnetHash[0] >> shift)
+        for i := L/8 + 1; i < 8; i++ {
+            j := i - L/8 - 1
+            prefixBytes[i] = (subnetHash[j] << (8 - shift)) | (subnetHash[j+1] >> shift)
+        }
     }
     // Zero the IID portion (bits 64-127)
     for i := 8; i < 16; i++ {
