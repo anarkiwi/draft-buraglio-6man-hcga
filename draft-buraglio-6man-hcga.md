@@ -34,6 +34,7 @@ normative:
   RFC8174:
   RFC4291:
   RFC3972:
+  RFC4581:
   RFC4982:
   RFC5480:
   RFC6234:
@@ -120,11 +121,14 @@ has no cryptographic relationship to the key. This document specifies
 Hierarchical CGA (HCGA), an extension to RFC 3972 that also derives part of
 the upper 64 bits — specifically the bits between the organizational prefix
 and the /64 boundary — from the same public key. The result is an address
-whose full 128-bit value is a deterministic function of a hardware-bound key,
-an operator-controlled aggregate prefix, and an RFC 3972 modifier. This capability
-provides agentic and workload network accountability in multi-tenant
-environments such as Kubernetes clusters, where infrastructure-assigned
-prefixes provide no per-instance cryptographic binding.
+whose full 128-bit value is a deterministic function of a public key
+(typically hardware-bound), an operator-controlled aggregate prefix, and
+two modifiers. HCGA is a traceability component intended for use within a
+larger accountability architecture that supplies key attestation, parameter
+distribution, and source-address enforcement; that architecture is not
+specified here. The capability supports workload network accountability in
+multi-tenant environments such as Kubernetes clusters, where
+infrastructure-assigned prefixes provide no per-instance cryptographic binding.
 
 ---
 
@@ -173,6 +177,17 @@ architecture {{WIMSE-ARCH}} and the AI Identity Management System
 {{WIMSE-AIMS}}, which address authentication and authorization of AI agent
 interactions above the IP layer.
 
+HCGA is one component of a larger accountability architecture and is not
+useful in isolation. This document specifies only the address derivation
+and verification functions. It assumes, and does not specify, a surrounding
+architecture that (a) attests the public key and its protection (see §9.5),
+(b) conveys the HCGA parameters (public key, modifier, prefix modifier) to
+verifiers, (c) binds packets or sessions to the key, for example through
+signed neighbor discovery {{RFC3971}} or a transport- or application-layer
+signature, and (d) enforces source-address validity within the aggregate.
+The forensic value of an HCGA address is bounded by the weakest of these.
+{{ANCHOR-PoC}} is one such architecture.
+
 ## 2. Conventions and Terminology
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
@@ -192,31 +207,50 @@ subnet bits occupy positions 48–63, a 16-bit field.
 to the aggregate prefix.
 
 **CGA params:** As defined in RFC 3972: modifier (128-bit random value),
-subnet prefix, public key (SPKI format).
+subnet prefix, collision count, public key (SPKI format), and optional
+extension fields {{RFC4581}}.
 
-**SPKI:** SubjectPublicKeyInfo, the DER-encoded format for a public key as
-defined in [RFC5480] for ECDSA keys. This is the same format used by [RFC3972]
-and [RFC4982].
+**Prefix modifier (PM):** A 128-bit value, chosen by the generating node,
+used to resolve /64 prefix collisions (§5.7). It is an HCGA parameter
+conveyed alongside the CGA params by the surrounding architecture; it is
+not part of the RFC 3972 CGA Parameters data structure.
+
+**SPKI:** SubjectPublicKeyInfo, the DER-encoded format for a public key.
+[RFC3972] specifies this encoding for RSA keys; this document uses it with
+ECDSA keys as defined in [RFC5480].
 
 ## 3. RFC 3972 Background
 
-[RFC3972] §5 defines the CGA IID generation procedure:
+[RFC3972] §5 defines the CGA IID generation procedure in terms of two
+hashes over the CGA Parameters data structure:
 
 ```
-IID = SHA-256(modifier[16] || 0x00^9 || prefix[8] || public_key_SPKI)[:8]
-IID[0] &= 0xFC    # clear bits 6 and 7 (universal/local and individual/group)
+CGA_Params = modifier[16] || subnet_prefix[8] || collision_count[1]
+             || public_key_SPKI || extension_fields
+Hash1 = H(CGA_Params)[:8]
+Hash2 = H(modifier[16] || 0x00^9 || public_key_SPKI || extension_fields)
+
+IID = Hash1
+IID[0] = (IID[0] & 0x1C) | (Sec << 5)
+         # bits 0-2 := Sec; bits 6 and 7 (u/g) := 0
 ```
 
-where `prefix[8]` is the first 8 bytes of the /64 prefix (the network
-address, not the host part).
+where `subnet_prefix[8]` is the first 8 bytes of the /64 prefix, `Sec` is
+a 3-bit security parameter encoded in the leftmost bits of the IID, and
+the 16×Sec leftmost bits of `Hash2` are required to be zero (the modifier
+is incremented until this holds). The collision count takes the values 0,
+1 or 2 and is incremented on duplicate address detection failure.
 
-Verification works in reverse: given `(address, modifier, public_key)`,
-recompute the IID and compare it against `address[8:16]`. The prefix input
-is taken from the address itself (bits 0–63).
+Verification works in reverse: given `(address, CGA_Params)`, check that
+`subnet_prefix` equals bits 0–63 of the address, recompute `Hash1` and
+compare it against `address[8:16]` ignoring the Sec and u/g bits, and
+check the `Hash2` zero-bit condition for the Sec value read from the
+address.
 
-[RFC4982] extends CGA to support multiple hash algorithms via a
-hash algorithm extension. HCGA uses SHA-256 with ECDSA P-256, consistent
-with the RFC 4982 framework.
+[RFC3972] uses SHA-1 for `H`. [RFC4982] provides hash agility by having
+the Sec value identify both the hash function and the security parameter,
+via the IANA "CGA SEC" registry. HCGA uses SHA-256 for `H` under a Sec
+value assigned per that registry (§10.1), with security parameter 0.
 
 ## 4. Problem Statement
 
@@ -256,29 +290,36 @@ retaining per-agent /64 accountability.
 
 HCGA takes the following inputs:
 
-- **public_key**: ECDSA P-256 public key (or other RFC 4982-compatible key type)
-- **modifier**: 128-bit random value (as in RFC 3972; SHOULD be regenerated per §5.3)
+- **public_key**: ECDSA P-256 public key, SPKI DER encoded
+- **modifier**: 128-bit value (as in RFC 3972; see §5.7 and §6)
+- **prefix_modifier**: 128-bit value, initially random (see §5.7)
 - **aggregate**: IPv6 prefix of length L, where L < 64 (operator-controlled)
-- **hash_alg**: SHA-256 (required for this profile; other algorithms per RFC 4982)
+- **hash_alg**: SHA-256 (required for this profile)
+- **Sec**: the CGA SEC value assigned to this profile (TBD1, §10.1)
 
 ### 5.2 Subnet Bit Derivation
 
-Let `n = 64 - L` be the number of subnet bits.
+Let `n = 64 - L` be the number of subnet bits, and `aggregate_bytes[8]`
+the first 8 bytes of the aggregate prefix with bits L through 63 set to
+zero.
 
 ```
-subnet_bytes_count = ⌈n / 8⌉
-subnet_bits        = SHA-256(public_key_SPKI_DER)[:subnet_bytes_count]
+subnet_hash = SHA-256(aggregate_bytes[8] || prefix_modifier[16]
+                      || public_key_SPKI_DER)
+subnet_bits = subnet_hash[0:n]      # leftmost n bits
 ```
 
-For a /48 aggregate (n = 16, subnet_bytes_count = 2):
-```
-subnet_bits = SHA-256(public_key_SPKI_DER)[0:2]   # 16 bits
-```
+For a /48 aggregate (n = 16), `subnet_bits` is the first two bytes of
+`subnet_hash`.
 
-The subnet bits are the most significant `n` bits of the extracted bytes.
-For byte-aligned cases (n divisible by 8), no masking is needed. For
-non-byte-aligned cases, the excess low-order bits of the last byte MUST
-be zeroed.
+For non-byte-aligned cases (n not divisible by 8), the leftmost `n` bits of
+the hash are used and placed at bit positions L through 63 of the prefix;
+no bits of the hash beyond position n−1 contribute.
+
+Including the aggregate in the hash input separates derivations under
+different aggregates; including the prefix modifier allows a node whose key
+yields a prefix already in use to derive a different prefix without
+changing its key.
 
 ### 5.3 HCGA Prefix Construction
 
@@ -290,9 +331,13 @@ hcga_prefix      = IPv6 prefix of length 64 formed from hcga_prefix_bits
 Equivalently, in GoLang notation:
 ```go
 var prefixBytes [8]byte
-aggBytes := aggregate.Addr().As16()
+aggBytes := aggregate.Masked().Addr().As16()
 copy(prefixBytes[:], aggBytes[:L/8])
-subnetHash := sha256.Sum256(publicKeySPKIDER)
+h := sha256.New()
+h.Write(aggBytes[:8])
+h.Write(prefixModifier[:])
+h.Write(publicKeySPKIDER)
+subnetHash := h.Sum(nil)
 if L%8 == 0 {
     // Byte-aligned: copy hash bytes directly
     for i := L / 8; i < 8; i++ {
@@ -312,21 +357,31 @@ if L%8 == 0 {
 
 ### 5.4 IID Derivation
 
-The IID is computed per [RFC3972] §5 using `hcga_prefix` as the prefix input:
+The IID is computed per [RFC3972] §5, with the hash function and Sec value
+given by [RFC4982] for the CGA SEC value TBD1, using `hcga_prefix` as the
+subnet prefix input:
 
 ```
-IID = SHA-256(modifier[16] || 0x00^9 || hcga_prefix_bytes[8] || 0x00 || public_key_SPKI_DER)[:8]
-IID[0] &= 0xFC
+CGA_Params = modifier[16] || hcga_prefix_bytes[8] || collision_count[1]
+             || public_key_SPKI_DER
+Hash1 = SHA-256(CGA_Params)[:8]
+IID   = Hash1
+IID[0] = (IID[0] & 0x1C) | (TBD1 << 5)
 ```
 
 where `hcga_prefix_bytes[8]` is the 8-byte representation of the /64
 network address (i.e., the first 8 bytes of a 128-bit address formed by
-appending 64 zero bits to `hcga_prefix`), and the single `0x00` octet is
-the RFC 3972 collision count field (fixed at zero for HCGA; collision
-avoidance uses modifier variation rather than the CGA retry mechanism).
+appending 64 zero bits to `hcga_prefix`), and `collision_count` is the
+RFC 3972 collision count (0, 1 or 2; see §5.7). The leftmost three bits of
+the IID carry the Sec value and bits 6 and 7 are cleared, exactly as in
+RFC 3972.
 
-This is identical to {{RFC3972}} §5 with `hcga_prefix` substituted for the
-externally-provided prefix.
+Because the security parameter associated with TBD1 is 0, the RFC 3972
+`Hash2` condition (16×0 = 0 leading zero bits) is satisfied for every
+modifier and no modifier search is needed at generation time.
+
+This is identical to {{RFC3972}} §5 as extended by {{RFC4982}}, with
+`hcga_prefix` substituted for the externally-provided prefix.
 
 ### 5.5 HCGA Address Construction
 
@@ -336,51 +391,76 @@ hcga_address = hcga_prefix :: IID
 
 The resulting 128-bit address has:
 - Bits 0 to L−1: operator-controlled aggregate prefix (fixed, BGP-announced)
-- Bits L to 63: `SHA-256(public_key)[0:64-L]` — hardware-derived subnet bits
-- Bits 64 to 127: RFC 3972 IID — hardware-derived, modifier-randomized
+- Bits L to 63: leftmost 64−L bits of
+  `SHA-256(aggregate || prefix_modifier || public_key)` — key-derived subnet bits
+- Bits 64 to 127: RFC 3972/4982 IID — key-derived, modifier-randomized
 
 ### 5.6 Verification Procedure
 
-Given `(hcga_address, modifier, public_key)`:
+Given `(hcga_address, CGA_Params, prefix_modifier)`, where `CGA_Params`
+carries the modifier, subnet prefix, collision count and public key:
 
 1. **Aggregate check:** verify that bits 0 to L−1 of `hcga_address` match
    the operator's aggregate prefix. This is a routing-level check, performed
    before cryptographic verification.
 
-2. **Subnet bit check:** compute `SHA-256(public_key_SPKI_DER)` and verify
-   that bits L to 63 of `hcga_address` match bits 0 to (63-L) of the hash.
+2. **Subnet bit check:** compute `subnet_hash` per §5.2 from the aggregate,
+   `prefix_modifier` and the public key, and verify that bits L to 63 of
+   `hcga_address` match bits 0 to (63−L) of the hash.
 
-3. **IID check:** extract `hcga_prefix` from bits 0–63 of `hcga_address`.
-   Recompute the IID per §5.4. Verify that bits 64–127 of `hcga_address`
-   match the computed IID (after the 0xFC masking).
+3. **IID check:** perform the [RFC3972] §5 verification procedure on
+   `(hcga_address, CGA_Params)` using the hash function and security
+   parameter given by [RFC4982] for the Sec value read from the address.
+   This includes checking that the subnet prefix in `CGA_Params` equals
+   bits 0–63 of `hcga_address`, that the collision count is 0, 1 or 2, and
+   that `Hash1` matches bits 64–127 ignoring the Sec and u/g bits. If the
+   Sec value is not TBD1 the address is not an HCGA address under this
+   profile.
 
 All three checks MUST pass for the address to be considered a valid HCGA
 address. Failure of any check MUST be treated as a verification failure.
 
-### 5.7 Modifier Handling
+Note that step 3 is exactly RFC 3972/4982 verification. A verifier that
+implements [RFC4982] and recognizes Sec value TBD1 therefore validates the
+IID without any knowledge of HCGA; only step 2 requires this specification.
 
-The modifier serves the same purpose as in [RFC3972]: collision avoidance
-when the SHA-256 IID derivation produces an address that is already in use.
-An implementation MUST implement the [RFC3972] §5 collision detection
-procedure, incrementing the modifier until no collision is detected.
+### 5.7 Collision Handling
 
-For HCGA, collision detection applies to both the IID (within the /64) and
-the /64 prefix itself (across agents within the aggregate). The probability
-of at least one /64 prefix collision among n agents in a /48 aggregate is
-approximately n²/(2 × 2^16) — approximately 0.7% for 30 agents; the birthday
-bound (50% collision probability) is reached at approximately 300 agents in a
-/48 aggregate.
+Two independent values are used to resolve collisions:
 
-An operator MUST monitor for prefix collisions and MUST NOT issue two HCGA
-addresses with the same /64 prefix. The modifier does not affect the subnet
-bits; prefix collision requires either a different aggregate or a different
-key. In operation this is typically the result of human error or misconfiguration.
+- **Collision count** (IID collisions within the /64): on duplicate address
+  detection failure, the collision count is incremented and the IID
+  recomputed, exactly as in [RFC3972] §5 steps 6–8. The modifier is not
+  changed for this purpose. After three collisions generation fails, per
+  RFC 3972.
+
+- **Prefix modifier** (/64 collisions within the aggregate): if the derived
+  `hcga_prefix` is already in use by a different key within the aggregate,
+  the generating node MUST increment `prefix_modifier` (as a 128-bit
+  unsigned integer, modulo 2^128) and recompute §5.2 through §5.4. How
+  prefix use is detected (for example, by querying a registry maintained by
+  the surrounding architecture, or by prefix-level duplicate detection on
+  the fabric) is outside the scope of this document.
+
+The probability that a freshly derived /64 collides with one of n existing
+prefixes in a /48 aggregate is approximately n/2^16, and the expected number
+of prefix-modifier retries is correspondingly small while n ≪ 2^16. The
+subnet field cannot hold more than 2^(64−L) prefixes; operators SHOULD
+choose L so that 2^(64−L) comfortably exceeds the expected number of
+simultaneously active keys (for example, L ≤ 32 for deployments of tens of
+thousands of workloads).
+
+The modifier plays no role in collision resolution under this profile; it
+is used only to derive multiple addresses within a /64 (§6).
 
 ## 6. Multiple HCGA Addresses per Agent
 
-The HCGA prefix depends only on the public key, while the IID depends on
-both the key and the modifier. An agent can therefore derive multiple valid
-addresses within the same /64 by varying the modifier. This enables:
+The HCGA prefix depends on the public key and prefix modifier but not on
+the modifier, while the IID depends on all of these. An agent can therefore
+derive multiple valid addresses within the same /64 by varying the
+modifier (RFC 3972 places no constraint on how the modifier is chosen
+beyond the Hash2 condition, which is vacuous under this profile). This
+enables:
 
 - Per-connection pseudonymity: each outbound connection uses a different
   IID (different modifier), making traffic correlation within the /64
@@ -399,15 +479,19 @@ collision count, public key) directly, with one substitution:
 
 - **modifier**: unchanged, per RFC 3972
 - **subnet prefix**: set to `hcga_prefix` (the derived /64), not the
-  aggregate — this allows RFC 3972-compliant verifiers to validate the IID
+  aggregate — this allows RFC 4982-capable verifiers to validate the IID
   given the /64, without knowledge of HCGA
 - **collision count**: unchanged, per RFC 3972
 - **public key**: unchanged, per RFC 3972
 
-An RFC 3972-compliant verifier, given `(hcga_address, cga_params)`, will
-correctly validate the IID with `hcga_prefix` as the subnet prefix. It
-cannot verify that `hcga_prefix` is itself derived from the public key —
-that check requires a verifier that implements this specification.
+The prefix modifier is not carried in the CGA Parameters structure and is
+conveyed separately (§2). A verifier given `(hcga_address, cga_params)`
+that implements [RFC4982] and recognizes Sec value TBD1 will correctly
+validate the IID with `hcga_prefix` as the subnet prefix. A verifier that
+implements only [RFC3972], or that does not recognize TBD1, will reject the
+address, because the hash function differs from SHA-1. No verifier can
+check that `hcga_prefix` is itself derived from the public key without
+the prefix modifier and this specification.
 
 ## 8. Routing Considerations
 
@@ -436,18 +520,59 @@ without any additional RPKI infrastructure.
 
 ## 9. Security Considerations
 
-### 9.1 Subnet Bit Security
+### 9.1 Scope and Threat Model
 
-The subnet bits are derived by truncating a SHA-256 hash of the public key.
-SHA-256 preimage resistance prevents an attacker from forging a valid HCGA
-prefix for a given key, and collision resistance prevents constructing two
-keys with the same subnet bits (within the birthday bound noted in §5.7).
+HCGA binds an address to a public key; it does not by itself prove that a
+given packet was sent by the holder of that key. As with RFC 3972 (see
+RFC 3972 §7.1), an HCGA address is only meaningful as evidence when
+combined with a signature made with the corresponding private key, or with
+network-layer enforcement that prevents other nodes from sourcing packets
+from that address. Both are the responsibility of the surrounding
+architecture (§1). An HCGA address presented without such a binding is a
+claim, not evidence.
 
-The subnet bits expose partial information about the public key — specifically,
-a truncated hash output — which is equivalent to what the RFC 3972 IID
-already reveals. No additional key material is exposed.
+Verification (§5.6) requires the modifier, collision count, public key and
+prefix modifier. HCGA does not specify how a verifier obtains these; in
+[RFC3971] they are carried in neighbor discovery options and are therefore
+available only on-link. A forensic verifier operating off-link depends on
+the surrounding architecture to have recorded the parameters at generation
+time. Without such a record, no verification is possible and the address
+carries no more information than any other address in the aggregate.
 
-### 9.2 Privacy Implications
+### 9.2 Subnet Bit Security
+
+The subnet bits are the leftmost n = 64−L bits of a SHA-256 output. The
+binding between a /64 prefix and a key is therefore n bits strong, not 256
+bits strong. In particular, for a /48 aggregate an attacker who wishes to
+derive a valid HCGA address inside a victim's /64 needs only to generate
+candidate key pairs (or candidate prefix modifiers for a key of their own)
+until the 16-bit subnet hash matches — approximately 2^16 trials, which is
+trivial. The subnet bits do not prevent a second key from occupying a
+given /64; they only make it impossible for an address to be a valid
+HCGA address without some key that hashes to its prefix.
+
+Consequently, the forensic claim "this /64 belongs to key K" cannot be made
+from the address alone. It can only be made by a verifier that holds a
+record, established at generation time by the surrounding architecture,
+of which key (and prefix modifier) was admitted to that /64, and that
+enforces exclusivity (§5.7). The value HCGA adds over an opaque registry
+mapping is that the record is self-checking: a mismatch between the
+recorded parameters and the address is detectable, so a registry entry
+cannot be silently re-pointed at a different key. The subnet bits also
+allow per-/64 policy to be applied before any registry lookup, at the cost
+of the squatting exposure above.
+
+The same bound applies to the IID: with security parameter 0 the IID is 59
+bits of hash output and an attacker can find a key producing any chosen IID
+within a chosen /64 in roughly 2^59 trials, as for an RFC 3972 address with
+Sec = 0.
+
+The subnet bits expose partial information about the public key —
+specifically, a truncated hash output — which is equivalent in kind to
+what the RFC 3972 IID already reveals. No additional key material is
+exposed.
+
+### 9.3 Privacy Implications
 
 Compared to RFC 3972 CGA, HCGA addresses are more linkable in one respect:
 the /64 subnet is stable across IID rotations (modifier changes). Any two
@@ -464,13 +589,13 @@ which rotate both the IID and (in some deployments) the prefix. Operators
 should weigh RFC 8981 semantics carefully before deploying HCGA where
 individual privacy is a concern.
 
-### 9.3 IPR Status of RFC 3972
+### 9.4 IPR Status of RFC 3972
 
 RFC 3972 carries IETF IPR disclosures (ipr/676, KAME). Any standards-track
 work extending RFC 3972 must address these encumbrances. This document takes
 no position on IPR; that determination belongs to the IETF Standards Process.
 
-### 9.4 Hardware Root of Trust Scope
+### 9.5 Hardware Root of Trust Scope
 
 The security properties of HCGA depend on the hardware root of trust used
 for the underlying key pair:
@@ -493,21 +618,25 @@ addresses transitive attestation across workload boundaries.
 
 ## 10. IANA Considerations
 
-### 10.1 CGA Algorithm Identifier
+### 10.1 CGA SEC Value
 
-RFC 4982 establishes a registry for hash algorithm identifiers used in CGA.
-This document uses SHA-256 with ECDSA P-256 key material and requests
-registration of this combination in that registry:
+[RFC4982] establishes the "CGA SEC" registry, in which each Sec value
+identifies a hash function and a security parameter. This document
+requests the assignment of one value from that registry:
 
-| Algorithm | Hash | Key Type | Reference |
+| Sec value | Hash function | Security parameter | Reference |
 |---|---|---|---|
-| HCGA-SHA256-P256 | SHA-256 | ECDSA P-256 (RFC 5480) | This document |
+| TBD1 | SHA-256 | 0 | This document |
+
+The assigned value is to replace "TBD1" throughout this document. The
+public key type is not encoded in the Sec value; this profile uses ECDSA
+P-256 keys as described in §5.1.
 
 ### 10.2 CGA Parameters Extension
 
 No new CGA Parameters extensions are required. This document passes
 `hcga_prefix` as the `subnet_prefix` field in the existing CGA Parameters
-structure.
+structure, and conveys the prefix modifier outside that structure (§2).
 
 ---
 
@@ -515,47 +644,69 @@ structure.
 
 # Appendix A: Example HCGA Derivation (ECDSA P-256, /48 Aggregate)
 
+This example uses Sec = 3 as an assumed value for TBD1; the vector will be
+regenerated once IANA assigns the value. The key is derived from a fixed
+scalar so that the vector is reproducible; it MUST NOT be used in
+production.
+
 Given:
-- aggregate: `3fff:1:cafe::/48`
-- ECDSA P-256 key pair (generated fresh; public key in SPKI DER form, 91 bytes)
-- modifier: `0000000000000000` (16 zero bytes; use random in production)
+- aggregate: `3fff:1:cafe::/48` (L = 48, n = 16)
+- ECDSA P-256 private scalar d (hex):
+  `3c7d964d5fe2da80544713c9312c5203ac4569111f3f063c6e2dacd5721acb01`
+- public key, SPKI DER (91 bytes, hex):
+```
+3059301306072a8648ce3d020106082a8648ce3d03010703420004d93d035f38
+f4414da99b65c170f24a0d72e962a84f6b42f2f32fa06bf99d4b2468776b5fb7
+bb958b60aa9e0b4c7b60ce82b0e9a1dbd2baf5457e850b31f93435
+```
+- prefix_modifier: 16 zero bytes
+- modifier: 16 zero bytes
+- collision_count: 0x00
 
 Step 1 — Subnet bits (16 bits for /48 → /64):
 ```
-pubkey_hash = SHA-256(public_key_SPKI_DER)
-subnet_bits = pubkey_hash[0:2]   # e.g., 0x3a7f
+aggregate_bytes = 3f ff 00 01 ca fe 00 00
+subnet_hash = SHA-256(aggregate_bytes || prefix_modifier || SPKI_DER)
+            = 6633525504192ef7d5fe7fef4de9fe103d499fca1e1c5cb3d71c2e462e620c87
+subnet_bits = 0x6633
 ```
 
 Step 2 — HCGA prefix:
 ```
-hcga_prefix = 2001:0db8:cafe:3a7f::/64
+hcga_prefix = 3fff:1:cafe:6633::/64
 ```
 
 Step 3 — IID:
 ```
-hcga_prefix_bytes = 20 01 0d b8 ca fe 3a 7f
-IID_full = SHA-256(modifier[16] || 0x00^9 || hcga_prefix_bytes[8] || 0x00 || pubkey_SPKI_DER)[:8]
-IID_full[0] &= 0xFC
-IID = e.g., c8:5e:8b:4d:e3:ce:e9:49
+hcga_prefix_bytes = 3f ff 00 01 ca fe 66 33
+CGA_Params = modifier[16] || hcga_prefix_bytes[8] || 0x00 || SPKI_DER
+Hash1[:8]  = b7 b2 a1 62 23 12 55 ab
+IID[0]     = (0xb7 & 0x1C) | (3 << 5) = 0x74
+IID        = 74 b2 a1 62 23 12 55 ab
 ```
 
 Step 4 — HCGA address:
 ```
-3fff:1:cafe:3a7f:c85e:8b4d:e3ce:e949
+3fff:1:cafe:6633:74b2:a162:2312:55ab
 ```
 
 Verification:
-1. Aggregate check: `3fff:1:cafe:` → matches operator's /48 ✓
-2. Subnet check: `SHA-256(pubkey)[0:2] = 0x3a7f` → matches bits 48–63 ✓
-3. IID check: recompute → `c85e:8b4d:e3ce:e949` ✓
+1. Aggregate check: `3fff:1:cafe::/48` → matches operator's /48 ✓
+2. Subnet check: `SHA-256(aggregate_bytes || prefix_modifier || SPKI_DER)[0:2] = 0x6633`
+   → matches bits 48–63 ✓
+3. IID check (RFC 3972/4982, Sec = 3 → SHA-256, security parameter 0):
+   subnet prefix in CGA_Params = bits 0–63 ✓; collision count 0 ✓;
+   Hash1 = `b7b2a162231255ab` matches `74b2a162231255ab` ignoring bits 0–2
+   and 6–7 ✓; Hash2 requires 0 leading zero bits ✓
 
 
 # Appendix B: Go Implementation Sketch
 
 ```go
-// DeriveHCGAPrefix derives the /64 HCGA prefix from an aggregate and public key.
-// aggregate must be a /L prefix with L < 64. Returns the /64 pod prefix.
-func DeriveHCGAPrefix(aggregate netip.Prefix, pub *ecdsa.PublicKey) (netip.Prefix, error) {
+// DeriveHCGAPrefix derives the /64 HCGA prefix from an aggregate, a prefix
+// modifier and a public key. aggregate must be a /L prefix with L < 64.
+// Returns the /64 HCGA prefix.
+func DeriveHCGAPrefix(aggregate netip.Prefix, prefixModifier [16]byte, pub *ecdsa.PublicKey) (netip.Prefix, error) {
     L := aggregate.Bits()
     if L >= 64 {
         return netip.Prefix{}, errors.New("hcga: aggregate must be shorter than /64")
@@ -564,9 +715,14 @@ func DeriveHCGAPrefix(aggregate netip.Prefix, pub *ecdsa.PublicKey) (netip.Prefi
     if err != nil {
         return netip.Prefix{}, err
     }
-    subnetHash := sha256.Sum256(pubDER)
+    aggBytes := aggregate.Masked().Addr().As16()
 
-    aggBytes := aggregate.Addr().As16()
+    h := sha256.New()
+    h.Write(aggBytes[:8])
+    h.Write(prefixModifier[:])
+    h.Write(pubDER)
+    subnetHash := h.Sum(nil)
+
     var prefixBytes [16]byte
     copy(prefixBytes[:], aggBytes[:L/8])
 
